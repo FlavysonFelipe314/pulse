@@ -9,6 +9,7 @@ import time
 import uuid
 import logging
 import re
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -65,21 +66,27 @@ def _yt_dlp_options(settings) -> dict:
     return options
 
 
-def _ffmpeg_input_options(info: dict) -> list[str]:
-    """Preserve the harmless request headers required by signed media URLs."""
-    headers = info.get("http_headers") or {}
-    arguments: list[str] = []
-    user_agent = headers.get("User-Agent") or headers.get("user-agent")
-    if user_agent:
-        arguments.extend(["-user_agent", str(user_agent)])
-    forwarded = []
-    for name in ("Referer", "Origin", "Accept", "Accept-Language"):
-        value = headers.get(name) or headers.get(name.lower())
-        if value and "\r" not in str(value) and "\n" not in str(value):
-            forwarded.append(f"{name}: {value}")
-    if forwarded:
-        arguments.extend(["-headers", "\r\n".join(forwarded) + "\r\n"])
-    return arguments
+def _yt_dlp_pipe_command(options: dict, video_id: str) -> list[str]:
+    """Let yt-dlp keep authenticated media requests under its own control."""
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--quiet",
+        "--no-warnings",
+        "--no-playlist",
+        "--format",
+        "bestaudio/best",
+        "--output",
+        "-",
+    ]
+    if options.get("cookiefile"):
+        command.extend(["--cookies", options["cookiefile"]])
+    clients = options.get("extractor_args", {}).get("youtube", {}).get("player_client", [])
+    if clients:
+        command.extend(["--extractor-args", f"youtube:player_client={','.join(clients)}"])
+    command.extend(["--", f"https://www.youtube.com/watch?v={video_id}"])
+    return command
 
 
 def _public_import_error(exc: Exception) -> str:
@@ -174,30 +181,43 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     target = settings.storage_dir / f"{token}.mp3"
+    downloader_process = None
+    ffmpeg_process = None
     try:
         options = _yt_dlp_options(settings)
         _update_job(job_id, status="extracting", progress=1, message="Preparando transmissão...")
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-        source_url = info.get("url")
-        if not source_url:
-            raise RuntimeError("A fonte não forneceu um fluxo de áudio compatível.")
         duration = int(info.get("duration") or 0)
         if duration > 4 * 60 * 60:
             raise RuntimeError("O conteúdo excede o limite de quatro horas.")
         expected_bytes = max(1, duration * 192_000 // 8) if duration else 0
-        command = [
+        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        downloader_process = subprocess.Popen(
+            _yt_dlp_pipe_command(options, video_id),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creation_flags,
+        )
+        ffmpeg_command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-            *_ffmpeg_input_options(info), "-i", source_url, "-vn", "-map_metadata", "-1",
+            "-i", "pipe:0", "-vn", "-map_metadata", "-1",
             "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
         ]
-        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
+        ffmpeg_process = subprocess.Popen(
+            ffmpeg_command,
+            stdin=downloader_process.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creation_flags,
+        )
+        if downloader_process.stdout:
+            downloader_process.stdout.close()
         written = 0
         _update_job(job_id, status="streaming", progress=2, message="Reproduzindo enquanto baixa...", _path=str(target))
         with target.open("wb") as output:
             while True:
-                chunk = process.stdout.read(64 * 1024) if process.stdout else b""
+                chunk = ffmpeg_process.stdout.read(64 * 1024) if ffmpeg_process.stdout else b""
                 if not chunk:
                     break
                 output.write(chunk)
@@ -205,10 +225,16 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
                 written += len(chunk)
                 percent = min(99, round(written / expected_bytes * 100)) if expected_bytes else 10
                 _update_job(job_id, status="streaming", progress=percent, message="Reproduzindo enquanto baixa...")
-        stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
-        return_code = process.wait()
-        if return_code != 0 or written < 1024:
-            raise RuntimeError(stderr.strip() or "A transmissão de áudio foi interrompida.")
+        ffmpeg_stderr = ffmpeg_process.stderr.read().decode("utf-8", errors="replace") if ffmpeg_process.stderr else ""
+        ffmpeg_return_code = ffmpeg_process.wait()
+        downloader_stderr = downloader_process.stderr.read().decode("utf-8", errors="replace") if downloader_process.stderr else ""
+        downloader_return_code = downloader_process.wait()
+        if downloader_return_code != 0 or ffmpeg_return_code != 0 or written < 1024:
+            raise RuntimeError(
+                downloader_stderr.strip()
+                or ffmpeg_stderr.strip()
+                or "A transmissão de áudio foi interrompida."
+            )
         with SessionLocal() as db:
             music = db.get(Music, music_id)
             if not music:
@@ -218,6 +244,13 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
             db.commit()
         _update_job(job_id, status="complete", progress=100, message="Adicionado à biblioteca")
     except Exception as exc:
+        for child in (ffmpeg_process, downloader_process):
+            if child is not None and child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    child.kill()
         try:
             target.unlink(missing_ok=True)
         except PermissionError:
