@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     server_host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("PULSE_HOST"))
     server_port: int = Field(default=8000, validation_alias=AliasChoices("PULSE_PORT"))
     storage_dir: Path = BASE_DIR / "storage" / "music"
+    youtube_cookies_file: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PULSE_YOUTUBE_COOKIES_FILE"),
+    )
+    youtube_player_clients: str = Field(
+        default="",
+        validation_alias=AliasChoices("PULSE_YOUTUBE_PLAYER_CLIENTS"),
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 

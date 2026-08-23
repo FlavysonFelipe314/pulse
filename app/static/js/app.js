@@ -800,8 +800,7 @@ async function startAutoDownload(raw, autoplay = false) {
         state.library.unshift(normalized({ ...track, id: job.music_id, playable_locally: false }));
         renderAll();
       }
-      if (entry.autoplay && job.id) prepareProgressiveAudio(job.id);
-      return await followDownload(job, track);
+      return await followDownload(job, track, entry);
     } catch (error) {
       showDownloadDock(track, { progress: 0, message: error.message, status: "failed" });
       toast(`Download não concluído: ${error.message}`, "error");
@@ -825,10 +824,14 @@ function prepareProgressiveAudio(jobId) {
   audio.play().catch(() => toast("O áudio está sendo preparado. Clique em play para começar.", "error"));
 }
 
-async function followDownload(initialJob, originalTrack) {
+async function followDownload(initialJob, originalTrack, entry = null) {
   let job = initialJob;
   while (job.status !== "complete" && job.status !== "failed") {
     updateDownloadProgress(job, originalTrack);
+    if (entry?.autoplay && !entry.streamStarted && job.status === "streaming") {
+      entry.streamStarted = true;
+      prepareProgressiveAudio(job.id);
+    }
     await new Promise(resolve => setTimeout(resolve, 700));
     job = await api(`/api/downloads/${job.id}`);
   }
@@ -839,7 +842,8 @@ async function followDownload(initialJob, originalTrack) {
   const saved = state.library.find(item => item.id === job.music_id || item.youtube_video_id === originalTrack.youtube_video_id);
   if (saved && sameTrack(state.current, originalTrack)) {
     state.current = saved;
-    if (!initialJob.id) prepareLocalAudio(saved, true);
+    if (!entry?.streamStarted && entry?.autoplay) prepareLocalAudio(saved, true);
+    else if (!initialJob.id) prepareLocalAudio(saved, true);
   }
   renderAll();
   const savedOnDevice = saved ? await saveTrackOnDevice(saved, { silent: true }) : false;

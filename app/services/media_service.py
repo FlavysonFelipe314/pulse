@@ -7,6 +7,8 @@ import subprocess
 import threading
 import time
 import uuid
+import logging
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,9 +23,19 @@ from app.models import Music
 ALLOWED_EXTENSIONS = {".mp3", ".m4a", ".ogg", ".wav", ".flac", ".opus", ".webm"}
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
+
+
+def _safe_log_message(exc: Exception) -> str:
+    # FFmpeg can include the complete signed media URL in its error output.
+    # Keep diagnostics useful without leaking temporary URLs or query tokens.
+    return re.sub(r"https?://\S+", "[URL removida]", str(exc))[:2000]
 
 
 class QuietLogger:
+    def __init__(self):
+        self.last_error = ""
+
     def debug(self, _: str):
         pass
 
@@ -31,8 +43,59 @@ class QuietLogger:
         pass
 
     def error(self, message: str):
-        with JOBS_LOCK:
-            self.last_error = message
+        self.last_error = message
+
+
+def _yt_dlp_options(settings) -> dict:
+    options = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "logger": QuietLogger(),
+    }
+    if settings.youtube_cookies_file:
+        cookie_file = settings.youtube_cookies_file.expanduser().resolve()
+        if not cookie_file.is_file():
+            raise RuntimeError("O arquivo de cookies configurado no servidor não foi encontrado.")
+        options["cookiefile"] = str(cookie_file)
+    clients = [client.strip() for client in settings.youtube_player_clients.split(",") if client.strip()]
+    if clients:
+        options["extractor_args"] = {"youtube": {"player_client": clients}}
+    return options
+
+
+def _ffmpeg_input_options(info: dict) -> list[str]:
+    """Preserve the harmless request headers required by signed media URLs."""
+    headers = info.get("http_headers") or {}
+    arguments: list[str] = []
+    user_agent = headers.get("User-Agent") or headers.get("user-agent")
+    if user_agent:
+        arguments.extend(["-user_agent", str(user_agent)])
+    forwarded = []
+    for name in ("Referer", "Origin", "Accept", "Accept-Language"):
+        value = headers.get(name) or headers.get(name.lower())
+        if value and "\r" not in str(value) and "\n" not in str(value):
+            forwarded.append(f"{name}: {value}")
+    if forwarded:
+        arguments.extend(["-headers", "\r\n".join(forwarded) + "\r\n"])
+    return arguments
+
+
+def _public_import_error(exc: Exception) -> str:
+    message = str(exc)
+    lowered = message.lower()
+    if isinstance(exc, FileNotFoundError):
+        return "FFmpeg não foi encontrado no servidor. Instale-o e reinicie o serviço."
+    if "arquivo de cookies" in lowered:
+        return message
+    if "sign in to confirm" in lowered or "not a bot" in lowered:
+        return "O YouTube bloqueou o IP do servidor. Configure cookies válidos no deploy e tente novamente."
+    if "javascript runtime" in lowered or "js runtime" in lowered:
+        return "O servidor precisa de um runtime JavaScript compatível (Deno) para importar do YouTube."
+    if "ffmpeg" in lowered and ("not found" in lowered or "no such file" in lowered):
+        return "FFmpeg não foi encontrado no servidor. Instale-o e reinicie o serviço."
+    return "A fonte recusou ou não disponibilizou este conteúdo para importação."
 
 
 def job_snapshot(job_id: str, user_id: int | None = None) -> dict:
@@ -111,14 +174,8 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     target = settings.storage_dir / f"{token}.mp3"
-    options = {
-        "format": "bestaudio/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "logger": QuietLogger(),
-    }
     try:
+        options = _yt_dlp_options(settings)
         _update_job(job_id, status="extracting", progress=1, message="Preparando transmissão...")
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
@@ -131,7 +188,7 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
         expected_bytes = max(1, duration * 192_000 // 8) if duration else 0
         command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-            "-i", source_url, "-vn", "-map_metadata", "-1",
+            *_ffmpeg_input_options(info), "-i", source_url, "-vn", "-map_metadata", "-1",
             "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
         ]
         creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -165,12 +222,14 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
             target.unlink(missing_ok=True)
         except PermissionError:
             pass
-        message = str(exc)
-        if "ffmpeg" in message.lower():
-            message = "FFmpeg não foi encontrado. Instale-o e tente novamente."
-        elif len(message) > 240:
-            message = "A fonte recusou ou não disponibilizou este conteúdo para importação."
-        _update_job(job_id, status="failed", progress=0, message=message)
+        logger.error(
+            "Falha na importação do YouTube job=%s music_id=%s video_id=%s: %s",
+            job_id,
+            music_id,
+            video_id,
+            _safe_log_message(exc),
+        )
+        _update_job(job_id, status="failed", progress=0, message=_public_import_error(exc))
 
 
 def resolve_media_file(filename: str) -> Path:
