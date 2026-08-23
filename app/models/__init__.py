@@ -1,4 +1,3 @@
-from app.models.entities import Folder, Music, PlaybackHistory, Playlist, PlaylistMusic, Setting
+from app.models.entities import Folder, Friendship, Music, PlaybackHistory, Playlist, PlaylistMusic, Setting, User, UserMusic, UserSession
 
-__all__ = ["Music", "Playlist", "PlaylistMusic", "Folder", "PlaybackHistory", "Setting"]
-
+__all__ = ["Music", "Playlist", "PlaylistMusic", "Folder", "PlaybackHistory", "Setting", "User", "UserMusic", "UserSession", "Friendship"]

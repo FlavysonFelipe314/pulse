@@ -1,10 +1,13 @@
 """Legal local-media import boundary.
 
-Imports require an explicit rights confirmation. This service does not bypass
-DRM, authentication, paywalls, geo-blocks or other technical restrictions.
+This service is intended only for media the user is authorized to import. It
+does not bypass DRM, authentication, paywalls or other technical restrictions.
 """
+import subprocess
 import threading
+import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -32,21 +35,69 @@ class QuietLogger:
             self.last_error = message
 
 
-def job_snapshot(job_id: str) -> dict:
+def job_snapshot(job_id: str, user_id: int | None = None) -> dict:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
             raise HTTPException(404, "Importação não encontrada.")
-        return dict(job)
+        if user_id is not None and user_id not in job.get("_user_ids", set()):
+            raise HTTPException(404, "Importação não encontrada.")
+        return {key: value for key, value in job.items() if not key.startswith("_")}
 
 
-def start_youtube_import(music_id: int, video_id: str) -> dict:
-    job_id = uuid.uuid4().hex
+def stream_job(job_id: str, user_id: int | None = None) -> Iterator[bytes]:
+    position = 0
+    handle = None
+    try:
+        while True:
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                if not job:
+                    return
+                if user_id is not None and user_id not in job.get("_user_ids", set()):
+                    return
+                path_value = job.get("_path")
+                status = job["status"]
+            if handle is None and path_value:
+                path = Path(path_value)
+                if path.is_file():
+                    handle = path.open("rb")
+            if handle:
+                handle.seek(position)
+                chunk = handle.read(64 * 1024)
+                if chunk:
+                    position += len(chunk)
+                    yield chunk
+                    continue
+            if status in {"complete", "failed"}:
+                return
+            time.sleep(0.12)
+    finally:
+        if handle:
+            handle.close()
+
+
+def job_id_for_music(music_id: int) -> str | None:
+    """Return the newest usable progressive job for a music record."""
     with JOBS_LOCK:
-        JOBS[job_id] = {"id": job_id, "music_id": music_id, "status": "queued", "progress": 0, "message": "Preparando importação..."}
+        matches = [
+            job for job in JOBS.values()
+            if job.get("music_id") == music_id and job.get("status") != "failed"
+        ]
+        return matches[-1]["id"] if matches else None
+
+
+def start_youtube_import(music_id: int, video_id: str, user_id: int) -> dict:
+    with JOBS_LOCK:
+        for existing in JOBS.values():
+            if existing["music_id"] == music_id and existing["status"] not in {"complete", "failed"}:
+                existing.setdefault("_user_ids", set()).add(user_id)
+                return {key: value for key, value in existing.items() if not key.startswith("_")}
+        job_id = uuid.uuid4().hex
+        JOBS[job_id] = {"id": job_id, "music_id": music_id, "status": "queued", "progress": 0, "message": "Preparando importação...", "_user_ids": {user_id}}
     thread = threading.Thread(target=_download_worker, args=(job_id, music_id, video_id), daemon=True)
     thread.start()
-    return job_snapshot(job_id)
+    return job_snapshot(job_id, user_id)
 
 
 def _update_job(job_id: str, **values) -> None:
@@ -59,38 +110,48 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
     settings = get_settings()
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
-    output_template = str(settings.storage_dir / f"{token}.%(ext)s")
-
-    def progress_hook(data: dict) -> None:
-        if data.get("status") == "downloading":
-            total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
-            downloaded = data.get("downloaded_bytes") or 0
-            percent = min(99, round(downloaded / total * 100)) if total else 5
-            _update_job(job_id, status="downloading", progress=percent, message="Baixando áudio autorizado...")
-        elif data.get("status") == "finished":
-            _update_job(job_id, status="processing", progress=99, message="Preparando arquivo de áudio...")
-
+    target = settings.storage_dir / f"{token}.mp3"
     options = {
         "format": "bestaudio/best",
-        "outtmpl": output_template,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "max_filesize": 250 * 1024 * 1024,
-        "progress_hooks": [progress_hook],
         "logger": QuietLogger(),
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
     }
     try:
-        _update_job(job_id, status="downloading", progress=1, message="Conectando à fonte...")
+        _update_job(job_id, status="extracting", progress=1, message="Preparando transmissão...")
         with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.download([f"https://www.youtube.com/watch?v={video_id}"])
-        target = settings.storage_dir / f"{token}.mp3"
-        if not target.is_file():
-            candidates = [path for path in settings.storage_dir.glob(f"{token}.*") if path.suffix.lower() in ALLOWED_EXTENSIONS]
-            if not candidates:
-                raise RuntimeError("O arquivo final não foi criado.")
-            target = candidates[0]
+            info = downloader.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        source_url = info.get("url")
+        if not source_url:
+            raise RuntimeError("A fonte não forneceu um fluxo de áudio compatível.")
+        duration = int(info.get("duration") or 0)
+        if duration > 4 * 60 * 60:
+            raise RuntimeError("O conteúdo excede o limite de quatro horas.")
+        expected_bytes = max(1, duration * 192_000 // 8) if duration else 0
+        command = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-i", source_url, "-vn", "-map_metadata", "-1",
+            "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
+        ]
+        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
+        written = 0
+        _update_job(job_id, status="streaming", progress=2, message="Reproduzindo enquanto baixa...", _path=str(target))
+        with target.open("wb") as output:
+            while True:
+                chunk = process.stdout.read(64 * 1024) if process.stdout else b""
+                if not chunk:
+                    break
+                output.write(chunk)
+                output.flush()
+                written += len(chunk)
+                percent = min(99, round(written / expected_bytes * 100)) if expected_bytes else 10
+                _update_job(job_id, status="streaming", progress=percent, message="Reproduzindo enquanto baixa...")
+        stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
+        return_code = process.wait()
+        if return_code != 0 or written < 1024:
+            raise RuntimeError(stderr.strip() or "A transmissão de áudio foi interrompida.")
         with SessionLocal() as db:
             music = db.get(Music, music_id)
             if not music:
@@ -100,8 +161,10 @@ def _download_worker(job_id: str, music_id: int, video_id: str) -> None:
             db.commit()
         _update_job(job_id, status="complete", progress=100, message="Adicionado à biblioteca")
     except Exception as exc:
-        for partial in settings.storage_dir.glob(f"{token}.*"):
-            partial.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError:
+            pass
         message = str(exc)
         if "ffmpeg" in message.lower():
             message = "FFmpeg não foi encontrado. Instale-o e tente novamente."

@@ -4,14 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0b10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pulse">
   <title>{{ app_name }} — sua música, no seu ritmo</title>
   <link rel="icon" href="{{ url_for('static', path='/images/favicon.svg') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" sizes="192x192" href="{{ url_for('static', path='/images/app-icon-192.png') }}">
+  <link rel="manifest" href="{{ url_for('static', path='/manifest.webmanifest') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', path='/css/app.css') }}">
 </head>
-<body>
+<body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
@@ -32,7 +37,33 @@
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="i-install" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21v-2a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v2M16 4a4 4 0 0 1 0 8M17 14a6 6 0 0 1 5 6v1"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M9 5h6M9 3h6a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="i-popout" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
   </svg>
+
+  <section class="auth-screen" id="authScreen" aria-label="Acesso à conta">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark"><i></i><i></i><i></i></span><span>pulse</span></div>
+      <div class="auth-intro"><span class="eyebrow">SUA MÚSICA, SÓ SUA</span><h1 id="authTitle">Entre na sua conta</h1><p id="authMessage">Acesse sua biblioteca e mantenha suas músicas sincronizadas em todos os seus aparelhos.</p></div>
+      <form id="loginForm" class="auth-form">
+        <label class="field"><span>E-mail</span><input name="email" type="email" autocomplete="email" maxlength="320" required placeholder="voce@email.com"></label>
+        <label class="field"><span>Senha</span><input name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="Sua senha"></label>
+        <button class="primary-btn auth-submit">Entrar</button>
+      </form>
+      <form id="registerForm" class="auth-form hidden">
+        <label class="field"><span>Nome</span><input name="display_name" autocomplete="name" minlength="2" maxlength="100" required placeholder="Como devemos chamar você?"></label>
+        <label class="field"><span>E-mail</span><input name="email" type="email" autocomplete="email" maxlength="320" required placeholder="voce@email.com"></label>
+        <label class="field"><span>Senha</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="Pelo menos 8 caracteres"></label>
+        <button class="primary-btn auth-submit">Criar minha conta</button>
+      </form>
+      <button class="text-btn auth-switch" id="authSwitch" data-mode="register">Ainda não tenho conta</button>
+      <p class="auth-error" id="authError" role="alert"></p>
+    </div>
+  </section>
 
   <div class="app-shell">
     <aside class="sidebar" aria-label="Navegação principal">
@@ -43,18 +74,22 @@
         <button class="nav-item" data-view="library"><svg><use href="#i-library"/></svg><span>Biblioteca</span></button>
         <button class="nav-item" data-view="favorites"><svg><use href="#i-heart"/></svg><span>Favoritos</span></button>
         <button class="nav-item" data-view="history"><svg><use href="#i-history"/></svg><span>Histórico</span></button>
+        <button class="nav-item" data-view="social"><svg><use href="#i-users"/></svg><span>Pessoas</span></button>
+        <button class="nav-item install-nav install-trigger" id="installAppBtn" data-install-label="Instalar app" aria-live="polite"><svg><use href="#i-install"/></svg><span class="install-label">Instalar app</span><small>Novo</small></button>
       </nav>
       <div class="side-divider"></div>
       <div class="side-section-head"><span>Suas playlists</span><button class="icon-btn" id="newPlaylistSide" title="Nova playlist"><svg><use href="#i-plus"/></svg></button></div>
       <div id="sidePlaylists" class="side-playlists"></div>
-      <div class="sidebar-footer"><div class="profile-avatar">R</div><div><strong>Meu espaço</strong><span>Biblioteca local</span></div><span class="status-dot" title="Tudo salvo"></span></div>
+      <button class="sidebar-footer profile-open" id="sidebarProfile"><div class="profile-avatar" data-profile-avatar>R</div><div><strong data-profile-name>Meu espaço</strong><span>Conta privada</span></div><span class="status-dot" title="Sessão protegida"></span></button>
     </aside>
 
     <main class="content" id="mainContent">
       <header class="topbar">
         <div class="history-buttons"><button class="icon-btn" id="backBtn" aria-label="Voltar">‹</button><button class="icon-btn" id="forwardBtn" aria-label="Avançar">›</button></div>
         <button class="top-search" id="topSearch"><svg><use href="#i-search"/></svg><span>O que você quer ouvir?</span><kbd>Ctrl K</kbd></button>
-        <button class="profile-pill"><span class="profile-avatar">R</span><span>Meu perfil</span></button>
+        <button class="mobile-install-btn install-trigger" id="installAppMobileBtn" data-install-label="Instalar" aria-label="Instalar aplicativo"><svg><use href="#i-install"/></svg><span class="install-label">Instalar</span></button>
+        <div class="notification-shell"><button class="icon-btn notification-btn" id="notificationBtn" aria-label="Notificações" aria-expanded="false"><svg><use href="#i-bell"/></svg><b id="notificationBadge" hidden>0</b></button><section class="notification-popover" id="notificationPopover" hidden><div class="notification-head"><strong>Notificações</strong><button class="text-btn" id="clearNotificationsBtn">Limpar</button></div><div id="notificationList"><p class="notification-empty">Nenhuma novidade.</p></div></section></div>
+        <button class="profile-pill profile-open" id="profileBtn"><span class="profile-avatar" data-profile-avatar>R</span><span data-profile-name>Meu perfil</span></button>
       </header>
 
       <section class="view active" id="view-home">
@@ -79,28 +114,35 @@
 
       <section class="view" id="view-library">
         <div class="page-heading inline"><div><span class="eyebrow">SUA COLEÇÃO</span><h1>Biblioteca</h1><p id="libraryCount">Todas as faixas que você guardou.</p></div><div class="heading-actions"><button class="soft-btn" id="newFolderBtn"><svg><use href="#i-folder"/></svg>Nova pasta</button><button class="primary-btn" id="newPlaylistBtn"><svg><use href="#i-plus"/></svg>Nova playlist</button></div></div>
-        <div class="filter-row"><button class="filter-chip active" data-filter="all">Tudo</button><button class="filter-chip" data-filter="favorites">Favoritas</button><div class="filter-spacer"></div><label class="mini-search"><svg><use href="#i-search"/></svg><input id="libraryFilter" placeholder="Filtrar biblioteca"></label></div>
+        <div class="filter-row"><button class="filter-chip active" data-filter="all">Tudo</button><button class="filter-chip" data-filter="favorites">Favoritas</button><button class="filter-chip" data-filter="device">Neste aparelho</button><div class="filter-spacer"></div><label class="mini-search"><svg><use href="#i-search"/></svg><input id="libraryFilter" placeholder="Filtrar biblioteca"></label></div>
         <div id="libraryContent"></div>
       </section>
 
       <section class="view" id="view-favorites"><div class="collection-hero pink"><div class="collection-icon"><svg><use href="#i-heart"/></svg></div><div><span class="eyebrow">COLEÇÃO</span><h1>Favoritos</h1><p>As faixas que ganharam um lugar especial.</p></div></div><div id="favoritesContent"></div></section>
       <section class="view" id="view-history"><div class="page-heading"><div><span class="eyebrow">DE VOLTA NO TEMPO</span><h1>Ouvidas recentemente</h1><p>Seu histórico fica salvo somente neste app.</p></div></div><div id="historyContent"></div></section>
+      <section class="view" id="view-social"><div class="page-heading"><div><span class="eyebrow">OUÇAM JUNTOS</span><h1>Pessoas e salas</h1><p>Encontre amigos, descubra playlists públicas e escutem a mesma fila em tempo real.</p></div></div><div class="social-layout"><div class="social-main"><form class="social-search" id="socialSearchForm"><svg><use href="#i-search"/></svg><input id="socialSearchInput" minlength="2" maxlength="100" required placeholder="Buscar pessoas pelo nome"><button class="primary-btn">Buscar</button></form><section class="social-section social-results"><div class="section-title"><div><h2>Resultados</h2><p>Os perfis encontrados aparecem aqui.</p></div></div><div id="peopleResults" class="people-list"><p class="social-placeholder">Pesquise alguém para começar.</p></div></section><section class="social-section"><div class="section-title"><div><h2>Seus amigos</h2><p>Veja playlists ou convide para uma sala.</p></div></div><div id="friendsList" class="people-list"></div></section><section class="social-section"><div class="section-title"><div><h2>Convites</h2><p>Pedidos de amizade recebidos.</p></div></div><div id="friendRequests" class="people-list"></div></section></div><aside class="room-launch-card"><span class="eyebrow">SALA AO VIVO</span><h2>Uma fila, vários amigos</h2><p>Crie uma sala ou entre com o código enviado por um amigo.</p><form id="createRoomForm"><label class="field"><span>Nome da sala</span><input name="name" maxlength="80" required value="Sala de música"></label><label class="field room-policy-select"><span>Quem pode adicionar músicas?</span><select name="queue_policy"><option value="everyone">Todos adicionam direto</option><option value="approval">Somente com minha aprovação</option><option value="host_only">Somente eu</option></select></label><button class="primary-btn">Criar sala</button></form><div class="room-or">ou</div><form id="joinRoomForm"><label class="field join-code-field"><span>Código da sala</span><div class="room-code-entry"><input name="code" id="joinRoomCodeInput" minlength="4" maxlength="10" required autocomplete="one-time-code" inputmode="text" aria-label="Código da sala"><div class="room-code-slots" id="roomCodeSlots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div><button class="icon-btn paste-code-btn" type="button" id="pasteRoomCodeBtn" title="Colar código" aria-label="Colar código"><svg><use href="#i-clipboard"/></svg></button></div></label><button class="primary-btn join-room-submit">Entrar na sala</button></form></aside></div></section>
       <section class="view" id="view-playlist"><div id="playlistDetail"></div></section>
     </main>
 
-    <aside class="queue-panel" id="queuePanel" aria-hidden="true"><div class="panel-head"><div><span class="eyebrow">A SEGUIR</span><h2>Fila</h2></div><button class="icon-btn" data-close="queue"><svg><use href="#i-close"/></svg></button></div><div id="queueList"></div><button class="text-btn danger" id="clearQueue">Limpar fila</button></aside>
+    <aside class="queue-panel" id="queuePanel" aria-hidden="true"><div class="panel-head"><div><span class="eyebrow">A SEGUIR</span><h2>Organizar fila</h2></div><button class="icon-btn" data-close="queue"><svg><use href="#i-close"/></svg></button></div><p class="panel-help">Use as setas para mudar a ordem ou remover itens.</p><div id="queueList"></div><button class="text-btn danger" id="clearQueue">Limpar fila</button></aside>
+    <aside class="lyrics-panel" id="lyricsPanel" aria-hidden="true"><div class="panel-head"><div><span class="eyebrow">ACOMPANHE</span><h2 id="lyricsTitle">Letra</h2></div><button class="icon-btn" data-close="lyrics"><svg><use href="#i-close"/></svg></button></div><div class="lyrics-provider">Letras fornecidas por LRCLIB</div><div class="lyrics-lines" id="lyricsLines"><p class="social-placeholder">Escolha uma música para ver a letra.</p></div></aside>
+    <aside class="room-panel collapsed" id="roomPanel" aria-hidden="true"><div class="room-panel-head"><div><span class="live-dot"></span><div><small>SALA AO VIVO</small><h2 id="roomName">Sala ao vivo</h2></div></div><div class="room-head-actions"><button class="icon-btn room-quick-add" id="roomQuickAddBtn" title="Adicionar música à fila" aria-label="Adicionar música à fila"><svg><use href="#i-plus"/></svg></button><button class="icon-btn room-collapse-btn" id="toggleRoomPanelBtn" title="Expandir ou recolher sala" aria-label="Expandir ou recolher sala" aria-expanded="false">⌄</button><button class="text-btn danger" id="leaveRoomBtn">Sair</button></div></div><button class="room-code-copy" id="copyRoomCodeBtn" type="button" title="Copiar código da sala"><span><small>CÓDIGO PARA ENTRAR</small><strong id="roomCode">ABC123</strong></span><b>Copiar</b></button><div class="room-policy-badge" id="roomPolicyLabel">Todos podem adicionar</div><div class="room-now" id="roomNow"><span class="eyebrow">TOCANDO AGORA</span><strong>Nenhuma música ainda</strong></div><div class="room-controls"><button class="icon-btn" id="roomPlayBtn" title="Play ou pause"><svg><use href="#i-play"/></svg></button><button class="primary-btn" id="roomAddBtn"><svg><use href="#i-search"/></svg><span id="roomAddLabel">Buscar música</span></button><button class="soft-btn" id="roomSkipBtn">Pular</button></div><div class="room-panel-body"><div class="room-participants" id="roomParticipants"></div><section class="room-requests" id="roomRequestsSection" hidden><div class="room-queue-head"><div><strong>Pedidos para aprovar</strong><small id="roomRequestCount">0 pedidos</small></div></div><div id="roomRequests"></div></section><div class="room-queue-head"><div><strong>Fila colaborativa</strong><small id="roomQueueCount">0 músicas</small></div><div><button class="text-btn danger" id="roomClearBtn">Limpar</button></div></div><div class="room-queue" id="roomQueue"></div><div class="room-chat"><div class="room-messages" id="roomMessages"></div><form id="roomChatForm"><input name="text" maxlength="500" autocomplete="off" placeholder="Mensagem para a sala"><button aria-label="Enviar"><svg><use href="#i-chat"/></svg></button></form></div></div></aside>
 
     <footer class="player" id="player">
       <div class="now-playing"><button class="cover-button" id="expandCover"><div class="player-cover placeholder" id="playerCover"><span class="brand-mark"><i></i><i></i><i></i></span></div></button><div class="now-meta"><strong id="playerTitle">Escolha uma música</strong><span id="playerArtist">Sua trilha começa aqui</span></div><button class="icon-btn favorite-btn" id="favoriteCurrent" title="Favoritar"><svg><use href="#i-heart"/></svg></button></div>
       <div class="player-center"><div class="transport"><button class="icon-btn mode-btn" id="shuffleBtn" title="Aleatório"><svg><use href="#i-shuffle"/></svg></button><button class="icon-btn" id="prevBtn" title="Anterior"><svg><use href="#i-prev"/></svg></button><button class="main-play" id="playBtn" title="Reproduzir"><svg><use href="#i-play"/></svg></button><button class="icon-btn" id="nextBtn" title="Próxima"><svg><use href="#i-next"/></svg></button><button class="icon-btn mode-btn" id="repeatBtn" title="Repetir"><svg><use href="#i-repeat"/></svg><small id="repeatOne">1</small></button></div><div class="timeline"><span id="currentTime">0:00</span><input type="range" id="seekBar" min="0" max="100" value="0" aria-label="Posição"><span id="duration">0:00</span></div></div>
-      <div class="player-tools"><button class="icon-btn" id="queueBtn" title="Fila"><svg><use href="#i-queue"/></svg></button><button class="icon-btn" id="muteBtn" title="Mudo"><svg><use href="#i-volume"/></svg></button><input type="range" id="volumeBar" min="0" max="1" step="0.01" value="0.75" aria-label="Volume"><button class="icon-btn" id="expandBtn" title="Tela cheia"><svg><use href="#i-expand"/></svg></button></div>
+      <div class="player-tools"><button class="icon-btn" id="queueBtn" title="Fila"><svg><use href="#i-queue"/></svg></button><button class="icon-btn lyrics-btn" id="lyricsBtn" title="Letra sincronizada">LRC</button><button class="icon-btn" id="floatingPlayerBtn" title="Abrir player flutuante" aria-label="Abrir player flutuante"><svg><use href="#i-popout"/></svg></button><button class="icon-btn" id="muteBtn" title="Volume"><svg><use href="#i-volume"/></svg></button><input type="range" id="volumeBar" min="0" max="1" step="0.01" value="0.75" aria-label="Volume"><button class="icon-btn" id="expandBtn" title="Tela cheia"><svg><use href="#i-expand"/></svg></button></div>
     </footer>
   </div>
 
   <audio id="localAudio" preload="metadata"></audio>
+  <div class="mobile-volume-panel" id="mobileVolumePanel" aria-hidden="true"><svg><use href="#i-volume"/></svg><input type="range" id="mobileVolumeBar" min="0" max="1" step="0.01" value="0.75" aria-label="Volume deste aparelho"><strong id="mobileVolumeValue">75%</strong></div>
+  <div class="download-dock" id="downloadDock" aria-live="polite"><div class="download-dock-art" id="downloadDockArt"></div><div class="download-dock-copy"><strong id="downloadDockTitle">Baixando</strong><span id="downloadDockMessage">Preparando...</span><div class="download-dock-track"><i id="downloadDockBar"></i></div></div><b id="downloadDockPercent">0%</b></div>
+  <div class="install-progress" id="installProgress" role="status" aria-live="assertive" aria-hidden="true"><span class="install-progress-icon"><span class="install-spinner"></span></span><div><strong id="installProgressTitle">Instalando o Pulse</strong><span id="installProgressMessage">O navegador está baixando o aplicativo...</span><div class="install-progress-track"><i></i></div></div></div>
   <div class="modal-layer" id="modalLayer" aria-hidden="true"></div>
   <div class="context-menu" id="contextMenu"></div>
   <div class="toast-region" id="toasts" aria-live="polite"></div>
+  <div class="offline-pill" id="offlinePill">Você está offline</div>
 
   <template id="emptyTemplate"><div class="empty-state"><div class="empty-icon"><svg><use href="#i-library"/></svg></div><h2></h2><p></p><button class="primary-btn"></button></div></template>
   <script src="{{ url_for('static', path='/js/app.js') }}"></script>

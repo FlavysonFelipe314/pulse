@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -27,6 +28,7 @@ class PlaylistCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     folder_id: int | None = None
+    is_public: bool = False
 
     @field_validator("name")
     @classmethod
@@ -43,6 +45,7 @@ class PlaylistOut(BaseModel):
     description: str | None
     cover: str | None
     folder_id: int | None
+    is_public: bool
     created_at: datetime
     track_count: int
     duration_seconds: int
@@ -66,7 +69,6 @@ class HistoryCreate(BaseModel):
 
 class DownloadCreate(BaseModel):
     track: MusicCreate
-    rights_confirmed: bool
 
 
 class PlaybackState(BaseModel):
@@ -75,3 +77,42 @@ class PlaybackState(BaseModel):
     volume: float = Field(default=0.75, ge=0, le=1)
     shuffle: bool = False
     repeat_mode: str = Field(default="off", pattern="^(off|one|all)$")
+
+
+class RegisterCreate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=100)
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginCreate(BaseModel):
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    display_name: str
+    auto_download_devices: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPreferences(BaseModel):
+    auto_download_devices: bool
+
+
+class PublicUserOut(BaseModel):
+    id: int
+    display_name: str
+    friendship_status: str | None = None
+
+
+class RoomCreate(BaseModel):
+    name: str = Field(default="Sala de música", min_length=2, max_length=80)
+    queue_policy: Literal["everyone", "approval", "host_only"] = "everyone"
+
+
+class RoomJoin(BaseModel):
+    code: str = Field(min_length=4, max_length=10, pattern=r"^[A-Za-z0-9]+$")
